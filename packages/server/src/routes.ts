@@ -46,6 +46,7 @@ import { CorsConfig } from "./cors"
 import { handlers } from "./handlers"
 import { authorizationLayer } from "./middleware/authorization"
 import { schemaErrorLayer } from "./middleware/schema-error"
+import { sessionLeaseLayer } from "./middleware/session-lease"
 import { ServerPairing } from "./pairing"
 import { layer } from "./location"
 import { formLocationLayer } from "./middleware/form-location"
@@ -193,6 +194,7 @@ function makeRoutes<AuthError, AuthServices>(
         Layer.provide(layer),
         Layer.provide(authorizationLayer),
         Layer.provide(schemaErrorLayer),
+        Layer.provide(sessionLeaseLayer),
         Layer.provide(auth),
         HttpRouter.provideRequest(requestServices),
         Layer.provideMerge(services),

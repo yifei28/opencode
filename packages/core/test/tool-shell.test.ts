@@ -115,6 +115,7 @@ const executionNode = makeGlobalNode({
         })
       })
       return SessionExecution.Service.of({
+        owned: (_sessionID, effect) => effect,
         active: Effect.succeed(new Set()),
         isActive: () => Effect.succeed(false),
         resume: complete,

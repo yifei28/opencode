@@ -59,6 +59,7 @@ let duringWake: Effect.Effect<void> = Effect.void
 const execution = Layer.succeed(
   SessionExecution.Service,
   SessionExecution.Service.of({
+    owned: (_sessionID, effect) => effect,
     active: Effect.sync(() => new Set()),
     isActive: () => Effect.succeed(false),
     resume: () => Effect.void,

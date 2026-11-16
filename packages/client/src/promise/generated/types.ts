@@ -2994,6 +2994,14 @@ export type InvalidCursorError = { readonly _tag: "InvalidCursorError"; readonly
 export const isInvalidCursorError = (value: unknown): value is InvalidCursorError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "InvalidCursorError"
 
+export type SessionBusyError = {
+  readonly _tag: "SessionBusyError"
+  readonly sessionID: string
+  readonly message: string
+}
+export const isSessionBusyError = (value: unknown): value is SessionBusyError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "SessionBusyError"
+
 export type SessionNotFoundError = {
   readonly _tag: "SessionNotFoundError"
   readonly sessionID: string
@@ -3034,14 +3042,6 @@ export type CommandExecutionError = {
 }
 export const isCommandExecutionError = (value: unknown): value is CommandExecutionError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "CommandExecutionError"
-
-export type SessionBusyError = {
-  readonly _tag: "SessionBusyError"
-  readonly sessionID: string
-  readonly message: string
-}
-export const isSessionBusyError = (value: unknown): value is SessionBusyError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "SessionBusyError"
 
 export type UnknownError = {
   readonly _tag: "UnknownError"

@@ -9,6 +9,7 @@ import { HttpClient, HttpClientResponse, HttpRouter, HttpServer } from "effect/h
 import { HttpApi, HttpApiBuilder, HttpApiGroup } from "effect/http-api"
 import { it } from "../../core/test/lib/effect"
 import { schemaErrorLayer } from "../src/middleware/schema-error"
+import { sessionLeaseLayer } from "../src/middleware/session-lease"
 
 // Serve the real protocol declaration for the session log stream, so the server encoder and the
 // generated Effect client agree on the reserved SSE failure event for this Effect version.
@@ -27,6 +28,7 @@ const handler = HttpRouter.toWebHandler(
       ),
     ),
     Layer.provide(schemaErrorLayer),
+    Layer.provide(sessionLeaseLayer),
     Layer.provide(
       Layer.succeed(
         Authorization,

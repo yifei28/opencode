@@ -1,4 +1,6 @@
 export * as Tool from "./tool.js"
+
+import { SessionLease } from "./session/lease.js"
 export { CallID, Content, Error, FileContent, TextContent } from "@opencode/schema/tool"
 export type { Context, Metadata, Namespace, Options, Result } from "@opencode/schema/tool"
 
@@ -136,6 +138,7 @@ const layer = Layer.effect(
       input: unknown,
       context: Tool.Context,
     ) {
+      yield* SessionLease.check(context.sessionID)
       yield* Effect.annotateCurrentSpan({
         "gen_ai.tool.name": name,
         "gen_ai.tool.call.id": context.id,

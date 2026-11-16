@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import { HttpApi, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/http-api"
 import { SchemaErrorMiddleware } from "./middleware/schema-error.js"
+import { SessionLeaseMiddleware } from "./middleware/session-lease.js"
 import { GenerateGroup } from "./groups/generate.js"
 import { ExperimentalGroup } from "./groups/experimental.js"
 import { VoiceGroup } from "./groups/voice.js"
@@ -67,7 +68,12 @@ type SessionGroups<
   FormLocationId extends HttpApiMiddleware.AnyId,
   FormLocationService,
 > =
-  | ReturnType<typeof makeSessionGroup<SessionLocationId, SessionLocationService, FormLocationId, FormLocationService>>
+  | HttpApiGroup.AddMiddleware<
+      ReturnType<
+        typeof makeSessionGroup<SessionLocationId, SessionLocationService, FormLocationId, FormLocationService>
+      >,
+      SessionLeaseMiddleware
+    >
   | typeof MessageGroup
 
 type FormGroups<LocationId extends HttpApiMiddleware.AnyId, LocationService> = ReturnType<
@@ -169,7 +175,7 @@ const makeApiFromGroup = <
     .add(makeLocationGroup(locationMiddleware))
     .add(AgentGroup.middleware(locationMiddleware))
     .add(PluginGroup.middleware(locationMiddleware))
-    .add(makeSessionGroup(sessionLocationMiddleware, formLocationMiddleware))
+    .add(makeSessionGroup(sessionLocationMiddleware, formLocationMiddleware).middleware(SessionLeaseMiddleware))
     .add(MessageGroup)
     .add(ModelGroup.middleware(locationMiddleware))
     .add(GenerateGroup)

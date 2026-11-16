@@ -34,6 +34,7 @@ export interface Coordinator<Key, E, Reason = never> {
  */
 type Execution<E, Reason> = {
   readonly done: Deferred.Deferred<void, E>
+  readonly ready: Deferred.Deferred<void, E>
   owner?: Fiber.Fiber<void>
   scope: Promotable
   pendingWake?: Promotable
@@ -53,6 +54,8 @@ type Execution<E, Reason> = {
  * ```
  */
 export const make = <Key, E, Reason = never>(options: {
+  /** Holds cross-process ownership through startup, execution and settlement. */
+  readonly guard?: (key: Key, effect: Effect.Effect<void, E>) => Effect.Effect<void, E>
   readonly drain: (key: Key, force: boolean, scope: Promotable) => Effect.Effect<void, E>
   /** Runs once when a process-local busy period begins, before its first drain. */
   readonly started?: (key: Key) => Effect.Effect<void>
@@ -82,6 +85,7 @@ export const make = <Key, E, Reason = never>(options: {
     const start = (key: Key, force: boolean, scope: Promotable) => {
       const execution: Execution<E, Reason> = {
         done: Deferred.makeUnsafe<void, E>(),
+        ready: Deferred.makeUnsafe<void, E>(),
         scope,
         stopping: false,
       }
@@ -89,16 +93,24 @@ export const make = <Key, E, Reason = never>(options: {
       // The leading yield lets `owner` be assigned before the drain can settle, and keeps
       // failing self-waking executions from growing the stack across successor starts.
       // Drains start one tick after wake; callers observe progress through events or run.
+      const work = Effect.yieldNow.pipe(
+        Effect.andThen(Effect.uninterruptible(options.started?.(key) ?? Effect.void)),
+        Effect.tap(() => Deferred.succeed(execution.ready, undefined)),
+        Effect.andThen(loop(key, execution, force)),
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            execution.owner = undefined
+          }).pipe(Effect.andThen(options.settled?.(key, exit, execution.interruptionReason) ?? Effect.void)),
+        ),
+      )
       execution.owner = fork(
-        Effect.yieldNow.pipe(
-          Effect.andThen(Effect.uninterruptible(options.started?.(key) ?? Effect.void)),
-          Effect.andThen(loop(key, execution, force)),
+        (options.guard?.(key, work) ?? work).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => {
-              execution.owner = undefined
-            }).pipe(Effect.andThen(options.settled?.(key, exit, execution.interruptionReason) ?? Effect.void)),
+              Deferred.doneUnsafe(execution.ready, exit)
+              settle(key, execution, exit)
+            }),
           ),
-          Effect.onExit((exit) => Effect.sync(() => settle(key, execution, exit))),
           Effect.exit,
           Effect.asVoid,
         ),
@@ -129,14 +141,15 @@ export const make = <Key, E, Reason = never>(options: {
       })
 
     const wake = (key: Key, scope: Promotable = "input") =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const execution = executions.get(key)
         if (execution !== undefined) {
           // Coalesced wakes keep the widest scope: "input" subsumes "steer".
           execution.pendingWake = execution.pendingWake === "input" ? "input" : scope
-          return
+          return options.guard ? Deferred.await(execution.ready).pipe(Effect.orDie) : Effect.void
         }
-        start(key, false, scope)
+        const started = start(key, false, scope)
+        return options.guard ? Deferred.await(started.ready).pipe(Effect.orDie) : Effect.void
       })
 
     const interrupt = (key: Key, reason?: Reason): Effect.Effect<boolean> =>

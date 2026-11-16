@@ -13,8 +13,10 @@ import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 import { toSessionError } from "./to-session-error.js"
 import { SessionInbox } from "./inbox.js"
+import { SessionLease } from "./lease.js"
 
 export interface Interface {
+  readonly owned: <A, E, R>(sessionID: SessionSchema.ID, effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
   /** Snapshots active execution owned by this process. */
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   /** Checks process-local ownership, including interruption cleanup and terminal settlement. */
@@ -59,6 +61,7 @@ export const layer = Layer.effect(
     const bus = yield* Bus.Service
     const jobs = yield* Job.Service
     const db = (yield* Database.Service).db
+    const leases = yield* SessionLease.make
     const reportLifecycle = <A>(sessionID: SessionSchema.ID, effect: Effect.Effect<A>) =>
       effect.pipe(
         Effect.tapCause((cause) =>
@@ -107,6 +110,7 @@ export const layer = Layer.effect(
       })
     })
     const coordinator = yield* SessionRunCoordinator.make<SessionSchema.ID, SessionRunner.RunError, InterruptReason>({
+      guard: leases.use,
       started: (sessionID) =>
         reportLifecycle(
           sessionID,
@@ -146,6 +150,7 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
+      owned: leases.use,
       active: coordinator.active,
       isActive: coordinator.isActive,
       interrupt: (sessionID, options) =>
@@ -166,7 +171,7 @@ export const layer = Layer.effect(
             yield* coordinator.wake(sessionID, "steer")
           return interrupted
         }),
-      resume: coordinator.run,
+      resume: (sessionID) => leases.use(sessionID, coordinator.run(sessionID)),
       wake: coordinator.wake,
       awaitIdle: coordinator.awaitIdle,
     })
@@ -183,6 +188,7 @@ export const node = makeGlobalNode({
 export const noopLayer = Layer.succeed(
   Service,
   Service.of({
+    owned: (_sessionID, effect) => effect,
     active: Effect.succeed(new Set()),
     isActive: () => Effect.succeed(false),
     resume: () => Effect.void,

@@ -58,6 +58,7 @@ const activeSessions = new Set<Session.ID>()
 const execution = Layer.succeed(
   SessionExecution.Service,
   SessionExecution.Service.of({
+    owned: (_sessionID, effect) => effect,
     active: Effect.sync(() => new Set(activeSessions)),
     isActive: (sessionID) => Effect.sync(() => activeSessions.has(sessionID)),
     resume: (sessionID) =>

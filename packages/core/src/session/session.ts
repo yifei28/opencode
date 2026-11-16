@@ -230,7 +230,7 @@ export const make = Effect.fn("Session.make")(function* () {
         Effect.catchTag("Session.NotFoundError", () => Effect.void),
         Effect.orDie,
       )
-    }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+    }).pipe((effect) => execution.owned(sessionID, effect), Effect.forkIn(scope, { startImmediately: true }))
     yield* Fiber.join(running)
   })
   const skill = Effect.fn("Session.skill")(function* (
@@ -355,31 +355,43 @@ export const make = Effect.fn("Session.make")(function* () {
     if (yield* execution.isActive(sessionID)) return yield* new BusyError({ sessionID })
     return yield* SessionRevert.commit(bus, session)
   })
-  const revert = { stage, clear, commit }
+  const owned =
+    <Args extends unknown[], A, E, R>(
+      operation: (sessionID: SessionSchema.ID, ...args: Args) => Effect.Effect<A, E, R>,
+    ) =>
+    (sessionID: SessionSchema.ID, ...args: Args) =>
+      get(sessionID).pipe(Effect.andThen(execution.owned(sessionID, operation(sessionID, ...args))))
   const operations = {
     get,
     message,
     view,
-    rename,
-    archive,
-    unarchive,
-    setMetadata,
-    setPermissions,
-    switchAgent,
-    switchModel,
+    rename: owned(rename),
+    archive: owned(archive),
+    unarchive: owned(unarchive),
+    setMetadata: owned(setMetadata),
+    setPermissions: owned(setPermissions),
+    switchAgent: owned(switchAgent),
+    switchModel: owned(switchModel),
     inbox,
-    prompt,
-    synthetic,
-    shell,
-    skill,
-    compact,
+    prompt: owned(prompt),
+    synthetic: owned(synthetic),
+    shell: owned(shell),
+    skill: owned(skill),
+    compact: owned(compact),
     wait,
-    resume,
-    interrupt,
-    cancelInbox,
-    steerInbox,
-    queueInbox,
-    revert,
+    resume: owned(resume),
+    interrupt: (sessionID: SessionSchema.ID, options?: Parameters<typeof interrupt>[1]) =>
+      store
+        .get(sessionID)
+        .pipe(
+          Effect.flatMap((session) =>
+            session ? execution.owned(sessionID, interrupt(sessionID, options)) : interrupt(sessionID, options),
+          ),
+        ),
+    cancelInbox: owned(cancelInbox),
+    steerInbox: owned(steerInbox),
+    queueInbox: owned(queueInbox),
+    revert: { stage: owned(stage), clear: owned(clear), commit: owned(commit) },
   }
 
   const forSession = (sessionID: SessionSchema.ID) => {

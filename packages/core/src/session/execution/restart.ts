@@ -97,7 +97,7 @@ export const layer = (options?: Options) =>
           metadata: { notice: "restart" },
         })
         return true
-      })
+      }, (effect, sessionID) => execution.owned(sessionID, effect))
 
       const restartMessage = (
         background: Job.Background,
@@ -250,8 +250,16 @@ export const layer = (options?: Options) =>
             (yield* store.listSuspended()).filter((sessionID) => !resumed.has(sessionID)),
             (sessionID) =>
               execution
-                .resume(sessionID)
-                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(sessionID))),
+                .owned(
+                  sessionID,
+                  Effect.gen(function* () {
+                    if (!(yield* prepareResume(sessionID))) return
+                    yield* execution
+                      .resume(sessionID)
+                      .pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
+                  }),
+                )
+                .pipe(Effect.ignoreCause),
             { concurrency: "unbounded", discard: true },
           )
           // Async observers consult this set at delivery; later completions wake parents normally.

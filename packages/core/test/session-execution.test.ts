@@ -20,7 +20,7 @@ import { SessionEvent } from "@opencode/core/session/event"
 import { SessionInbox } from "@opencode/core/session/inbox"
 import { SessionMessage } from "@opencode/core/session/message"
 import { SessionRunner } from "@opencode/core/session/runner/index"
-import { SessionInboxTable, SessionTable } from "@opencode/core/session/sql"
+import { SessionInboxTable, SessionLeaseTable, SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, LayerMap, Scope } from "effect"
 import { eq } from "drizzle-orm"
@@ -33,6 +33,87 @@ const it = testEffect(
 )
 
 describe("SessionExecution lifecycle", () => {
+  it.effect("independent execution services cannot drain the same Session", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const sessionID = Session.ID.make("ses_cross_process_lease")
+      yield* seedSessions(database, [sessionID])
+      const scopeA = yield* Scope.make()
+      const scopeB = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scopeA, Exit.void))
+      yield* Effect.addFinalizer(() => Scope.close(scopeB, Exit.void))
+      const started = yield* Deferred.make<void>()
+      let otherDrains = 0
+      const a = Context.get(
+        yield* buildExecution(scopeA, () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))),
+        SessionExecution.Service,
+      )
+      const other = yield* buildExecution(scopeB, () =>
+        Effect.sync(() => {
+          otherDrains++
+        }),
+      )
+      const b = Context.get(other, SessionExecution.Service)
+      yield* a.resume(sessionID).pipe(Effect.forkScoped)
+      yield* Deferred.await(started)
+      yield* Context.get(other, SessionRestart.Service).resumeSuspendedSessions
+      expect(yield* attempts(database, sessionID)).toBe(0)
+      expect(Exit.isFailure(yield* b.resume(sessionID).pipe(Effect.exit))).toBe(true)
+      expect(otherDrains).toBe(0)
+      expect((yield* claims(database))[sessionID]).toBe(true)
+      yield* a.interrupt(sessionID)
+      yield* a.awaitIdle(sessionID)
+      yield* b.resume(sessionID)
+      expect(otherDrains).toBe(1)
+    }),
+  )
+
+  it.effect("durable event publication rejects an expired execution token", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const bus = yield* Bus.Service
+      const sessionID = Session.ID.make("ses_fenced_event")
+      yield* seedSessions(database, [sessionID])
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const execution = Context.get(yield* buildExecution(scope, () => Effect.void), SessionExecution.Service)
+      const result = yield* execution
+        .owned(
+          sessionID,
+          Effect.gen(function* () {
+            yield* database.db.update(SessionLeaseTable).set({ expires_at: 0 }).run().pipe(Effect.orDie)
+            yield* bus.publish(SessionEvent.Renamed, { sessionID, title: "stale event" })
+          }),
+        )
+        .pipe(Effect.exit)
+      expect(Exit.isFailure(result)).toBe(true)
+      expect((yield* database.db.select().from(SessionTable).get())?.title).toBe(sessionID)
+    }),
+  )
+
+  it.effect("restart cleanup preserves another owner's child execution claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const parent = Session.ID.make("ses_leased_parent")
+      const child = Session.ID.make("ses_leased_child")
+      yield* seedSessions(database, [parent])
+      yield* seedSessions(database, [child], { parent_id: parent, time_suspended: Date.now() })
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const execution = Context.get(yield* buildExecution(scope, () => Effect.void), SessionExecution.Service)
+      yield* execution.owned(
+        child,
+        Effect.gen(function* () {
+          yield* store.releaseChildClaims([])
+          expect((yield* claims(database))[child]).toBe(true)
+        }),
+      )
+      yield* store.releaseChildClaims([])
+      expect((yield* claims(database))[child]).toBe(false)
+    }),
+  )
+
   test("classifies success and typed failure terminals", () => {
     expect(SessionExecution.terminal(Exit.succeed(undefined))).toEqual({ type: "succeeded" })
     expect(

@@ -11,7 +11,7 @@ import { SessionHistory } from "./history.js"
 import { MessageDecodeError } from "./error.js"
 import { SessionMessage } from "./message.js"
 import { Session } from "@opencode/schema/session"
-import { SessionMessageTable, SessionTable } from "./sql.js"
+import { SessionLeaseTable, SessionMessageTable, SessionTable } from "./sql.js"
 import { fromRow } from "./info.js"
 
 const ListInputBase = {
@@ -243,6 +243,13 @@ const layer = Layer.effect(
             and(
               isNotNull(SessionTable.time_suspended),
               isNotNull(SessionTable.parent_id),
+              notInArray(
+                SessionTable.id,
+                db
+                  .select({ id: SessionLeaseTable.session_id })
+                  .from(SessionLeaseTable)
+                  .where(isNotNull(SessionLeaseTable.owner_id)),
+              ),
               recoverable.length > 0 ? notInArray(SessionTable.id, Array.from(recoverable)) : undefined,
             ),
           )

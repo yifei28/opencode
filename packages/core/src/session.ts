@@ -384,22 +384,26 @@ const layer = Layer.effect(
       get: (sessionID) => sessions.forSession(sessionID).get(),
       environment: Effect.fn("Session.environment")(function* (input) {
         yield* result.get(input.sessionID)
-        if (input.variables !== undefined) yield* environments.set(input.sessionID, input.variables)
+        if (input.variables !== undefined)
+          yield* execution.owned(input.sessionID, environments.set(input.sessionID, input.variables))
         return yield* environments.get(input.sessionID)
       }),
       view: (input) => sessions.forSession(input.sessionID).view(input),
-      remove: Effect.fn("Session.remove")(function* (sessionID) {
-        yield* result.get(sessionID)
-        yield* execution.interrupt(sessionID)
-        yield* execution.awaitIdle(sessionID)
-        yield* jobs.cancelSession(sessionID)
-        yield* transport.close(sessionID)
-        const children = yield* store.list({ parentID: sessionID })
-        yield* Effect.forEach(children, (child) => result.remove(child.id), { concurrency: 1, discard: true })
-        yield* environments.clear(sessionID)
-        yield* bus.publish(SessionEvent.Deleted, { sessionID })
-        yield* bus.remove(sessionID)
-      }),
+      remove: Effect.fn("Session.remove")(
+        function* (sessionID) {
+          yield* result.get(sessionID)
+          yield* execution.interrupt(sessionID)
+          yield* execution.awaitIdle(sessionID)
+          yield* jobs.cancelSession(sessionID)
+          yield* transport.close(sessionID)
+          const children = yield* store.list({ parentID: sessionID })
+          yield* Effect.forEach(children, (child) => result.remove(child.id), { concurrency: 1, discard: true })
+          yield* environments.clear(sessionID)
+          yield* bus.publish(SessionEvent.Deleted, { sessionID })
+          yield* bus.remove(sessionID)
+        },
+        (effect, sessionID) => result.get(sessionID).pipe(Effect.andThen(execution.owned(sessionID, effect))),
+      ),
       list: Effect.fn("Session.list")(function* (input = {}) {
         const filter =
           input.cursor === undefined
@@ -488,12 +492,15 @@ const layer = Layer.effect(
           Effect.provideService(Bus.Service, bus),
         )
       }),
-      command: Effect.fn("Session.command")(function* (input) {
-        const session = yield* result.get(input.sessionID)
-        return yield* SessionCommand.execute({ ...input, session }).pipe(
-          Effect.provideService(Instance.Service, instances),
-        )
-      }),
+      command: Effect.fn("Session.command")(
+        function* (input) {
+          const session = yield* result.get(input.sessionID)
+          return yield* SessionCommand.execute({ ...input, session }).pipe(
+            Effect.provideService(Instance.Service, instances),
+          )
+        },
+        (effect, input) => result.get(input.sessionID).pipe(Effect.andThen(execution.owned(input.sessionID, effect))),
+      ),
       shell: (input) => sessions.forSession(input.sessionID).shell(input),
       skill: (input) => sessions.forSession(input.sessionID).skill(input),
       switchAgent: (input) => sessions.forSession(input.sessionID).switchAgent(input),
@@ -503,7 +510,7 @@ const layer = Layer.effect(
       unarchive: (sessionID) => sessions.forSession(sessionID).unarchive(),
       setMetadata: (input) => sessions.forSession(input.sessionID).setMetadata(input),
       setPermissions: (input) => sessions.forSession(input.sessionID).setPermissions(input),
-      move: moves.move,
+      move: (input) => execution.owned(input.sessionID, moves.move(input)),
       compact: (input) => sessions.forSession(input.sessionID).compact(input),
       wait: (sessionID) => sessions.forSession(sessionID).wait(),
       active: execution.active,

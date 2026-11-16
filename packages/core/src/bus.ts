@@ -8,6 +8,7 @@ import { Database } from "./database/database.js"
 import { EventSequenceTable, EventTable } from "./event/sql.js"
 import type { Location } from "@opencode/schema/location"
 import { KeyedMutex } from "./effect/keyed-mutex.js"
+import { SessionLease } from "./session/lease.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { isDeepStrictEqual } from "node:util"
 import { Durable } from "@opencode/schema/durable-event-manifest"
@@ -317,6 +318,7 @@ export function configured(options?: Options) {
                   .transaction(
                     () =>
                       Effect.gen(function* () {
+                        yield* SessionLease.check(aggregateID)
                         const row = yield* db
                           .select({ seq: EventSequenceTable.seq, ownerID: EventSequenceTable.owner_id })
                           .from(EventSequenceTable)

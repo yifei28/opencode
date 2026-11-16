@@ -25,6 +25,17 @@ type SessionMessageData = DistributiveOmit<
 >
 export type SessionPartData = SessionMessage.AssistantContentEncoded
 
+export const SessionLeaseTable = sqliteTable("session_lease", {
+  session_id: text()
+    .$type<SessionSchema.ID>()
+    .primaryKey()
+    .references(() => SessionTable.id, { onDelete: "cascade" }),
+  owner_id: text(),
+  hostname: text().notNull(),
+  expires_at: integer().notNull(),
+  generation: integer().notNull(),
+})
+
 export const SessionTable = sqliteTable(
   "session_v2",
   {
