@@ -10,6 +10,7 @@ import { chmod } from "node:fs/promises"
 import { isAbsolute, join } from "path"
 import { DatabaseMigration } from "./migration.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { isNetworkFilesystem } from "./network-filesystem.js"
 
 const makeDatabase = EffectDrizzleSqlite.makeWithDefaults()
 type DatabaseShape = Effect.Success<typeof makeDatabase>
@@ -20,6 +21,7 @@ export interface Interface {
 
 export const Options = Schema.Struct({
   path: Schema.optional(Schema.String),
+  wal: Schema.optional(Schema.Boolean),
 })
 export type Options = typeof Options.Type
 
@@ -30,7 +32,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/st
 // releasing a shared semaphore resumes the waiting object's fiber inside the
 // releasing object's I/O context, where its first storage call is rejected as
 // cross-object I/O.
-const databaseLayer = (lock: Effect.Effect<Semaphore.Semaphore>) =>
+const databaseLayer = (lock: Effect.Effect<Semaphore.Semaphore>, wal = true) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
@@ -39,11 +41,11 @@ const databaseLayer = (lock: Effect.Effect<Semaphore.Semaphore>) =>
       const durableObject = EffectDrizzleSqlite.managesTransactionsNatively(db.$client)
 
       if (supportsTuningPragmas && !durableObject) {
-        yield* db.run("PRAGMA journal_mode = WAL")
-        yield* db.run("PRAGMA synchronous = NORMAL")
         yield* db.run("PRAGMA busy_timeout = 5000")
+        yield* db.run(wal ? "PRAGMA journal_mode = WAL" : "PRAGMA journal_mode = DELETE")
+        yield* db.run("PRAGMA synchronous = NORMAL")
         yield* db.run("PRAGMA cache_size = -64000")
-        yield* db.run("PRAGMA wal_checkpoint(PASSIVE)")
+        if (wal) yield* db.run("PRAGMA wal_checkpoint(PASSIVE)")
       }
       // Durable Object SQLite always enforces foreign keys and rejects the pragma.
       if (supportsForeignKeyToggle && !durableObject) yield* db.run("PRAGMA foreign_keys = ON")
@@ -69,15 +71,15 @@ function lockFor(filename: string) {
 export function layer(options: Options = { path: ":memory:" }) {
   return Layer.unwrap(
     Effect.gen(function* () {
-      const provide = (filename: string) =>
-        databaseLayer(filename === ":memory:" ? Semaphore.make(1) : Effect.succeed(lockFor(filename))).pipe(
-          Layer.provide(sqliteLayer({ filename })),
+      const provide = (filename: string, wal: boolean) =>
+        databaseLayer(filename === ":memory:" ? Semaphore.make(1) : Effect.succeed(lockFor(filename)), wal).pipe(
+          Layer.provide(sqliteLayer({ filename, disableWAL: !wal })),
         )
       const filename = options.path ?? ":memory:"
-      if (filename === ":memory:") return provide(filename)
+      if (filename === ":memory:") return provide(filename, false)
       const file = isAbsolute(filename) ? filename : join((yield* Global.Service).data, filename)
       yield* Effect.promise(() => restrictToOwner(file))
-      return provide(file)
+      return provide(file, options.wal ?? !isNetworkFilesystem(file))
     }),
   )
 }
